@@ -38,8 +38,24 @@ try
     set capturedCount to capturedCount of captureResult
     set earlyStopDetected to earlyStopDetected of captureResult
 
-    -- Step 7: 完了通知
-    showCompletionDialog(capturedCount, saveFolderPath, earlyStopDetected)
+    -- Step 7: PDF作成確認
+    set pdfPath to ""
+    set pdfCreated to false
+
+    try
+        set dialogResult to display dialog "スクリーンショット撮影完了" & linefeed & linefeed & capturedCount & "枚の画像を保存しました。" & linefeed & linefeed & "PDFファイルを作成しますか？" buttons {"スキップ", "PDF作成"} default button "PDF作成" with icon note
+
+        if button returned of dialogResult = "PDF作成" then
+            set pdfPath to convertToPDF(saveFolderPath)
+            set pdfCreated to true
+        end if
+    on error
+        -- キャンセルまたはエラー時はPDF作成をスキップ
+        set pdfCreated to false
+    end try
+
+    -- Step 8: 完了通知
+    showCompletionDialog(capturedCount, saveFolderPath, earlyStopDetected, pdfCreated, pdfPath)
 
 on error errMsg
     -- 予期しないエラー
@@ -334,20 +350,70 @@ on getKindleWindowBounds(processName)
     return windowBounds
 end getKindleWindowBounds
 
-on showCompletionDialog(capturedCount, folderPath, earlyStopDetected)
+on showCompletionDialog(capturedCount, folderPath, earlyStopDetected, pdfCreated, pdfPath)
     set capturedCountText to capturedCount as string
-    set message to capturedCountText & "枚のスクリーンショットを保存しました。" & linefeed & linefeed & "保存先: " & folderPath
+    set message to capturedCountText & "枚のスクリーンショットを保存しました。" & linefeed & linefeed & "PNG保存先: " & folderPath
     if earlyStopDetected is true then
         set message to message & linefeed & "(2回連続で同じページが検出されたため、撮影を終了しました)"
     end if
 
-    display dialog message buttons {"フォルダを開く", "OK"} default button "OK" with icon note
+    if pdfCreated is true then
+        set message to message & linefeed & linefeed & "PDF: " & pdfPath
+        display dialog message buttons {"PDFを開く", "フォルダを開く", "OK"} default button "PDFを開く" with icon note
 
-    -- 「フォルダを開く」ボタンが押された場合
-    if button returned of result = "フォルダを開く" then
-        tell application "Finder"
-            activate
-            open (folderPath as POSIX file)
-        end tell
+        set buttonChoice to button returned of result
+        if buttonChoice = "PDFを開く" then
+            do shell script "open " & quoted form of pdfPath
+        else if buttonChoice = "フォルダを開く" then
+            tell application "Finder"
+                activate
+                open (folderPath as POSIX file)
+            end tell
+        end if
+    else
+        display dialog message buttons {"フォルダを開く", "OK"} default button "OK" with icon note
+
+        if button returned of result = "フォルダを開く" then
+            tell application "Finder"
+                activate
+                open (folderPath as POSIX file)
+            end tell
+        end if
     end if
 end showCompletionDialog
+
+-- PNG画像を1つのPDFに変換
+on convertToPDF(screenshotFolder)
+    try
+        -- デスクトップパスを取得
+        set desktopPath to POSIX path of (path to desktop folder)
+
+        -- タイムスタンプを生成
+        set timestamp to do shell script "date +%Y%m%d_%H%M%S"
+
+        -- PDFファイル名とパス
+        set pdfFileName to "kindle_capture_" & timestamp & ".pdf"
+        set pdfPath to desktopPath & pdfFileName
+
+        -- PNG画像一覧を取得（page_*.pngをソート）
+        set pngListCommand to "ls " & quoted form of screenshotFolder & "page_*.png 2>/dev/null | sort"
+        set pngFiles to do shell script pngListCommand
+
+        -- PNG画像がない場合はエラー
+        if pngFiles = "" then
+            display dialog "PNG画像が見つかりませんでした。" buttons {"OK"} default button "OK" with icon stop
+            error "No PNG files found"
+        end if
+
+        -- img2pdfでPDF生成
+        set img2pdfCommand to "/Users/kuniaki-k/.pyenv/shims/img2pdf " & pngFiles & " -o " & quoted form of pdfPath
+        do shell script img2pdfCommand
+
+        -- PDFパスを返す
+        return pdfPath
+
+    on error errMsg
+        display dialog "PDF作成エラー：" & linefeed & errMsg buttons {"OK"} default button "OK" with icon stop
+        error "PDF conversion failed: " & errMsg
+    end try
+end convertToPDF
