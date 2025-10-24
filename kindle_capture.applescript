@@ -34,10 +34,12 @@ try
     set saveFolderPath to createScreenshotFolder()
 
     -- Step 6: スクリーンショット撮影ループ
-    captureScreenshots(pageCount, saveFolderPath, kindleWindowInfo)
+    set captureResult to captureScreenshots(pageCount, saveFolderPath, kindleWindowInfo)
+    set capturedCount to capturedCount of captureResult
+    set earlyStopDetected to earlyStopDetected of captureResult
 
     -- Step 7: 完了通知
-    showCompletionDialog(pageCount, saveFolderPath)
+    showCompletionDialog(capturedCount, saveFolderPath, earlyStopDetected)
 
 on error errMsg
     -- 予期しないエラー
@@ -194,6 +196,11 @@ on captureScreenshots(pageCount, folderPath, kindleWindowInfo)
     set {x1, y1, x2, y2} to windowBounds
     set boundsStr to (x1 as string) & "," & (y1 as string) & "," & ((x2 - x1) as string) & "," & ((y2 - y1) as string)
 
+    set previousHash to missing value
+    set duplicateStreak to 0
+    set capturedCount to 0
+    set earlyStopDetected to false
+
     repeat with i from 1 to pageCount
         try
             -- ゼロパディング（001, 002, ...）
@@ -204,17 +211,40 @@ on captureScreenshots(pageCount, folderPath, kindleWindowInfo)
             -- スクリーンショット撮影（-R で座標範囲指定）
             do shell script "screencapture -R " & boundsStr & " -x " & quoted form of filePath
 
-            -- 最後のページでない場合のみページめくり
-            if i < pageCount then
-                -- スペースキーでページめくり
-                tell application "System Events"
-                    tell process processName
-                        keystroke space
-                    end tell
-                end tell
+            -- ハッシュで同一ページ判定
+            set currentHash to do shell script "shasum -a 256 " & quoted form of filePath & " | awk '{print $1}'"
+            if previousHash is missing value then
+                set duplicateStreak to 1
+            else if currentHash = previousHash then
+                set duplicateStreak to duplicateStreak + 1
+            else
+                set duplicateStreak to 1
+            end if
 
-                -- ページ描画待機（PAGE_TURN_DELAY秒）
-                delay PAGE_TURN_DELAY
+            if duplicateStreak ≥ 2 then
+                set earlyStopDetected to true
+                try
+                    -- 2回目の重複キャプチャは残さない
+                    do shell script "rm -f " & quoted form of filePath
+                    log "Duplicate page detected. Removed " & fileName
+                end try
+                exit repeat
+            else
+                set capturedCount to capturedCount + 1
+                set previousHash to currentHash
+
+                -- 最後のページでない場合のみページめくり
+                if i < pageCount then
+                    -- スペースキーでページめくり
+                    tell application "System Events"
+                        tell process processName
+                            keystroke space
+                        end tell
+                    end tell
+
+                    -- ページ描画待機（PAGE_TURN_DELAY秒）
+                    delay PAGE_TURN_DELAY
+                end if
             end if
 
         on error errMsg
@@ -222,6 +252,8 @@ on captureScreenshots(pageCount, folderPath, kindleWindowInfo)
             log "Screenshot " & fileName & " failed: " & errMsg
         end try
     end repeat
+
+    return {capturedCount:capturedCount, earlyStopDetected:earlyStopDetected}
 end captureScreenshots
 
 -- 現在のKindleウィンドウ座標を取得
@@ -273,10 +305,13 @@ on getKindleWindowBounds(processName)
     return windowBounds
 end getKindleWindowBounds
 
--- 完了通知
-on showCompletionDialog(pageCount, folderPath)
-    set pageCountText to pageCount as string
-    set message to pageCountText & "枚のスクリーンショットを保存しました。" & linefeed & linefeed & "保存先: " & folderPath
+on showCompletionDialog(capturedCount, folderPath, earlyStopDetected)
+    set capturedCountText to capturedCount as string
+    set message to capturedCountText & "枚のスクリーンショットを保存しました。" & linefeed & linefeed & "保存先: " & folderPath
+    if earlyStopDetected is true then
+        set message to message & linefeed & "(2回連続で同じページが検出されたため、撮影を終了しました)"
+    end if
+
     display dialog message buttons {"フォルダを開く", "OK"} default button "OK" with icon note
 
     -- 「フォルダを開く」ボタンが押された場合
