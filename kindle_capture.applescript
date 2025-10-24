@@ -395,8 +395,8 @@ on convertToPDF(screenshotFolder)
         set pdfFileName to "kindle_capture_" & timestamp & ".pdf"
         set pdfPath to desktopPath & pdfFileName
 
-        -- PNG画像一覧を取得（page_*.pngをソート）
-        set pngListCommand to "ls " & quoted form of screenshotFolder & "page_*.png 2>/dev/null | sort"
+        -- PNG画像一覧を取得（page_*.pngをソート、改行をスペースに変換）
+        set pngListCommand to "ls " & quoted form of screenshotFolder & "page_*.png 2>/dev/null | sort | tr '\\n' ' '"
         set pngFiles to do shell script pngListCommand
 
         -- PNG画像がない場合はエラー
