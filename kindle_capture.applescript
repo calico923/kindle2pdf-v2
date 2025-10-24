@@ -223,11 +223,40 @@ on captureScreenshots(pageCount, folderPath, kindleWindowInfo)
 
             if duplicateStreak ≥ 2 then
                 set earlyStopDetected to true
-                try
-                    -- 2回目の重複キャプチャは残さない
-                    do shell script "rm -f " & quoted form of filePath
-                    log "Duplicate page detected. Removed " & fileName
-                end try
+
+                -- ファイルシステムの同期を待つ
+                delay 0.3
+
+                -- 確実な削除処理（リトライ付き）
+                set deleteSuccess to false
+                repeat with retryAttempt from 1 to 3
+                    try
+                        -- -f を外してエラーを検出
+                        do shell script "rm " & quoted form of filePath
+
+                        -- 削除の確認
+                        try
+                            do shell script "test -f " & quoted form of filePath
+                            -- ファイルがまだ存在する = 削除失敗
+                            log "Retry " & retryAttempt & ": File still exists after rm"
+                            if retryAttempt < 3 then delay 0.2
+                        on error
+                            -- ファイルが存在しない = 削除成功
+                            set deleteSuccess to true
+                            log "✓ Deleted duplicate: " & fileName
+                            exit repeat
+                        end try
+                    on error errMsg
+                        log "Retry " & retryAttempt & " failed: " & errMsg
+                        if retryAttempt < 3 then delay 0.2
+                    end try
+                end repeat
+
+                -- 最終確認
+                if deleteSuccess is false then
+                    log "⚠ WARNING: Failed to delete duplicate: " & fileName
+                end if
+
                 exit repeat
             else
                 set capturedCount to capturedCount + 1
